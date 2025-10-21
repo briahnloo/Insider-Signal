@@ -268,85 +268,95 @@ class TransactionAnalyzer:
         Returns:
             Formatted string explaining each component
         """
-        breakdown = f"\n{'='*60}\nCOMPONENT ANALYSIS: {ticker}\n{'='*60}\n"
+        breakdown = f"\n{'='*60}\nWHY {ticker} IS A STRONG BUY\n{'='*60}\n"
 
         components = conviction_components.get('component_scores', {})
         details = conviction_components.get('components', {})
+        multipliers = conviction_components.get('multipliers', {})
 
         # Define interpretations for each component
         interpretations = {
+            'insider_cluster': {
+                'name': 'Multi-Insider Activity',
+                'emoji': '👥',
+                'good': (0.7, 'Multiple high-ranking executives buying simultaneously'),
+                'ok': (0.5, 'Single insider with significant position'),
+                'bad': (0.3, 'Isolated insider activity'),
+            },
             'filing_speed': {
                 'name': 'Filing Speed',
                 'emoji': '⚡',
-                'good': (0.7, 'Insider filed quickly - high conviction'),
-                'ok': (0.5, 'Normal filing delay'),
-                'bad': (0.3, 'Long delay before filing - suspicious'),
+                'good': (0.7, 'Filed same/next day - maximum conviction'),
+                'ok': (0.5, 'Filed within deadline - normal confidence'),
+                'bad': (0.3, 'Late filing - reduced confidence'),
             },
             'short_interest': {
-                'name': 'Short Interest',
+                'name': 'Short Squeeze Potential',
                 'emoji': '🔋',
-                'good': (0.7, 'High short squeeze potential'),
-                'ok': (0.5, 'Normal short interest'),
+                'good': (0.7, 'High short interest creates squeeze opportunity'),
+                'ok': (0.5, 'Normal short interest levels'),
                 'bad': (0.3, 'Low short interest - no squeeze catalyst'),
             },
             'accumulation': {
-                'name': 'Multi-Insider Accumulation',
-                'emoji': '👥',
-                'good': (0.7, 'Multiple insiders buying - coordinated signal'),
-                'ok': (0.5, 'Single insider activity'),
-                'bad': (0.3, 'No other insider buying'),
+                'name': 'Sustained Buying Pattern',
+                'emoji': '📈',
+                'good': (0.7, 'Consistent insider accumulation over time'),
+                'ok': (0.5, 'Recent insider activity'),
+                'bad': (0.3, 'No sustained buying pattern'),
+            },
+            'options_precursor': {
+                'name': 'Options Market Signal',
+                'emoji': '📊',
+                'good': (0.7, 'Unusual call volume before insider filing'),
+                'ok': (0.5, 'Normal options activity'),
+                'bad': (0.3, 'No options confirmation'),
             },
             'earnings_sentiment': {
-                'name': 'Earnings Sentiment',
-                'emoji': '📊',
-                'good': (0.7, 'Recent positive earnings - insider validates'),
-                'ok': (0.5, 'No recent earnings or neutral'),
-                'bad': (0.3, 'Insider buying despite negative earnings - risky'),
+                'name': 'Earnings Catalyst',
+                'emoji': '💰',
+                'good': (0.7, 'Recent positive earnings validate insider buying'),
+                'ok': (0.5, 'No recent earnings impact'),
+                'bad': (0.3, 'Insider buying despite negative earnings'),
             },
-            'news_sentiment': {
-                'name': 'News Sentiment',
-                'emoji': '📰',
-                'good': (0.7, 'Positive news amplifies insider signal'),
-                'ok': (0.5, 'Neutral news environment'),
-                'bad': (0.3, 'Negative news - insider buying contrarian play'),
+            'silence_score': {
+                'name': 'Market Silence',
+                'emoji': '🤫',
+                'good': (0.7, 'Market hasn\'t priced in the opportunity yet'),
+                'ok': (0.5, 'Normal market awareness'),
+                'bad': (0.3, 'High market attention - less edge'),
             },
-            'options_flow': {
-                'name': 'Options Flow',
-                'emoji': '📈',
-                'good': (0.7, 'Bullish call volume - smart money agrees'),
-                'ok': (0.5, 'Neutral options positioning'),
-                'bad': (0.3, 'Bearish put volume - no options confirmation'),
-            },
-            'analyst_sentiment': {
-                'name': 'Analyst Sentiment',
-                'emoji': '👔',
-                'good': (0.7, 'Analyst bullish - institutional validation'),
-                'ok': (0.5, 'Mixed analyst opinions'),
-                'bad': (0.3, 'Analysts bearish - insider contrarian bet'),
-            },
-            'intraday_momentum': {
-                'name': 'Intraday Momentum',
-                'emoji': '🎯',
-                'good': (0.7, 'Bullish momentum - good entry timing'),
-                'ok': (0.5, 'Neutral momentum'),
-                'bad': (0.3, 'Bearish momentum - consider waiting'),
+            'network_effects': {
+                'name': 'Sector/Network Effects',
+                'emoji': '🌐',
+                'good': (0.7, 'Sector rotation and supply chain alignment'),
+                'ok': (0.5, 'Neutral sector positioning'),
+                'bad': (0.3, 'Sector headwinds or misalignment'),
             },
             'red_flags': {
-                'name': 'Red Flags',
+                'name': 'Risk Factors',
                 'emoji': '🚩',
-                'good': (0.7, 'No red flags - clean trade'),
-                'ok': (0.5, 'Minor warnings'),
-                'bad': (0.3, 'Multiple red flags detected'),
+                'good': (0.7, 'No red flags detected - clean opportunity'),
+                'ok': (0.5, 'Minor risk factors present'),
+                'bad': (0.3, 'Multiple red flags - high risk'),
             },
         }
 
+        # Sort components by importance (weight * score)
+        component_importance = []
         for component, score in components.items():
             if component not in interpretations:
                 continue
+            weight = details.get(component, {}).get('weight', 0)
+            importance = weight * score
+            component_importance.append((component, score, weight, importance))
+        
+        component_importance.sort(key=lambda x: x[3], reverse=True)
 
+        breakdown += "KEY SIGNALS THAT MAKE THIS A STRONG BUY:\n\n"
+
+        for component, actual_score, weight, importance in component_importance:
             info = interpretations[component]
-            weight = details[component].get('weight', 0)
-            actual_score = components[component]
+            multiplier = multipliers.get(component, 1.0)
 
             # Determine status
             if actual_score >= info['good'][0]:
@@ -356,12 +366,74 @@ class TransactionAnalyzer:
             else:
                 status, description = '❌', info['bad'][1]
 
-            bar = "█" * int(actual_score * 10) + "░" * (10 - int(actual_score * 10))
-            breakdown += f"{info['emoji']} {info['name']:30s} {status} [{bar}] {actual_score:.2f} ({weight:.0%})\n"
-            breakdown += f"   → {description}\n\n"
+            # Show multiplier impact
+            mult_text = f" (×{multiplier:.2f})" if multiplier != 1.0 else ""
+            
+            breakdown += f"{info['emoji']} {info['name']}{mult_text}\n"
+            breakdown += f"   {status} {description}\n"
+            breakdown += f"   Score: {actual_score:.2f} | Weight: {weight:.0%} | Impact: {importance:.3f}\n\n"
 
+        # Add summary of why this is strong
+        strong_signals = [c for c, s, w, i in component_importance if s >= 0.7]
+        if strong_signals:
+            breakdown += f"🎯 STRENGTH: {len(strong_signals)} strong signals align\n"
+        
         breakdown += f"{'='*60}\n"
         return breakdown
+
+    def generate_signal_explanation(
+        self, conviction_components: Dict, ticker: str
+    ) -> Dict:
+        """
+        Generate user-friendly signal explanation for dashboard display.
+        
+        Returns:
+            Dict with formatted explanation sections
+        """
+        components = conviction_components.get('component_scores', {})
+        details = conviction_components.get('components', {})
+        multipliers = conviction_components.get('multipliers', {})
+        
+        # Find the strongest signals
+        strong_signals = []
+        moderate_signals = []
+        weak_signals = []
+        
+        for component, score in components.items():
+            if component in ['insider_cluster', 'filing_speed', 'short_interest', 'accumulation', 
+                           'options_precursor', 'earnings_sentiment', 'silence_score', 'network_effects']:
+                weight = details.get(component, {}).get('weight', 0)
+                multiplier = multipliers.get(component, 1.0)
+                impact = weight * score
+                
+                signal_info = {
+                    'component': component,
+                    'score': score,
+                    'weight': weight,
+                    'multiplier': multiplier,
+                    'impact': impact
+                }
+                
+                if score >= 0.7:
+                    strong_signals.append(signal_info)
+                elif score >= 0.5:
+                    moderate_signals.append(signal_info)
+                else:
+                    weak_signals.append(signal_info)
+        
+        # Sort by impact
+        strong_signals.sort(key=lambda x: x['impact'], reverse=True)
+        moderate_signals.sort(key=lambda x: x['impact'], reverse=True)
+        
+        return {
+            'ticker': ticker,
+            'strong_signals': strong_signals,
+            'moderate_signals': moderate_signals,
+            'weak_signals': weak_signals,
+            'total_strong': len(strong_signals),
+            'total_moderate': len(moderate_signals),
+            'total_weak': len(weak_signals)
+        }
 
     def generate_action_summary(
         self,

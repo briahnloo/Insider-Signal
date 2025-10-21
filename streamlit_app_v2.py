@@ -312,6 +312,46 @@ with tab1:
 
                     st.markdown("---")
 
+                    # Signal breakdown for top signals
+                    if len(valid_signals) > 0:
+                        st.markdown("### 🔍 Signal Breakdown - Why These Are Strong Buys")
+                        
+                        # Show breakdown for top 3 signals
+                        for i, sig in enumerate(valid_signals[:3]):
+                            if sig['category'] in ['STRONG_BUY', 'BUY']:
+                                with st.expander(f"🎯 {sig['ticker']} - {sig['category']} (Score: {sig['adjusted_conviction']:.3f})"):
+                                    signal_explanation = components['analyzer'].generate_signal_explanation(
+                                        sig['full_result'], sig['ticker']
+                                    )
+                                    
+                                    # Display key reasons
+                                    st.markdown("**Key Reasons for Strong Buy Signal:**")
+                                    
+                                    if signal_explanation['strong_signals']:
+                                        for signal in signal_explanation['strong_signals'][:3]:
+                                            component_name = signal['component'].replace('_', ' ').title()
+                                            multiplier_text = f" (×{signal['multiplier']:.2f})" if signal['multiplier'] != 1.0 else ""
+                                            
+                                            st.write(f"✅ **{component_name}**{multiplier_text} - Score: {signal['score']:.2f}")
+                                    
+                                    # Show supporting signals
+                                    if signal_explanation['moderate_signals']:
+                                        st.markdown("**Supporting Factors:**")
+                                        for signal in signal_explanation['moderate_signals'][:2]:
+                                            component_name = signal['component'].replace('_', ' ').title()
+                                            st.write(f"⚠️ **{component_name}** - Score: {signal['score']:.2f}")
+                                    
+                                    # Summary
+                                    total_strong = signal_explanation['total_strong']
+                                    if total_strong >= 3:
+                                        st.success(f"🎯 **Exceptional**: {total_strong} strong signals align")
+                                    elif total_strong >= 2:
+                                        st.info(f"✅ **Strong**: {total_strong} strong signals align")
+                                    else:
+                                        st.warning(f"⚠️ **Moderate**: {total_strong} strong signals")
+
+                    st.markdown("---")
+
                     # Detailed signals table
                     st.markdown("### 🎯 Detailed Signals Table")
 
@@ -361,12 +401,57 @@ with tab1:
                                 st.markdown(f"**Duplicates:** {sig['duplicates']}")
                                 st.markdown(f"**Action:** {sig['action']}")
 
-                            # Component breakdown
-                            st.markdown("#### Component Scores:")
-                            components_str = components['analyzer'].generate_component_breakdown(
+                            # Signal breakdown - why this is a strong buy
+                            st.markdown("#### 🎯 Why This Is A Strong Buy:")
+                            
+                            # Generate signal explanation
+                            signal_explanation = components['analyzer'].generate_signal_explanation(
                                 sig['full_result'], sig['ticker']
                             )
-                            st.code(components_str)
+                            
+                            # Display strong signals
+                            if signal_explanation['strong_signals']:
+                                st.markdown("**🔥 Strong Signals:**")
+                                for signal in signal_explanation['strong_signals'][:3]:  # Top 3
+                                    component_name = signal['component'].replace('_', ' ').title()
+                                    multiplier_text = f" (×{signal['multiplier']:.2f})" if signal['multiplier'] != 1.0 else ""
+                                    
+                                    col1, col2, col3 = st.columns([3, 1, 1])
+                                    with col1:
+                                        st.write(f"✅ **{component_name}**{multiplier_text}")
+                                    with col2:
+                                        st.write(f"Score: {signal['score']:.2f}")
+                                    with col3:
+                                        st.write(f"Impact: {signal['impact']:.3f}")
+                            
+                            # Display moderate signals if any
+                            if signal_explanation['moderate_signals']:
+                                st.markdown("**⚠️ Supporting Signals:**")
+                                for signal in signal_explanation['moderate_signals'][:2]:  # Top 2
+                                    component_name = signal['component'].replace('_', ' ').title()
+                                    col1, col2 = st.columns([3, 1])
+                                    with col1:
+                                        st.write(f"⚠️ **{component_name}**")
+                                    with col2:
+                                        st.write(f"Score: {signal['score']:.2f}")
+                            
+                            # Summary
+                            total_strong = signal_explanation['total_strong']
+                            total_moderate = signal_explanation['total_moderate']
+                            
+                            if total_strong >= 3:
+                                st.success(f"🎯 **Exceptional Signal**: {total_strong} strong signals + {total_moderate} supporting signals")
+                            elif total_strong >= 2:
+                                st.info(f"✅ **Strong Signal**: {total_strong} strong signals + {total_moderate} supporting signals")
+                            else:
+                                st.warning(f"⚠️ **Moderate Signal**: {total_strong} strong signals + {total_moderate} supporting signals")
+                            
+                            # Detailed component breakdown (collapsible)
+                            with st.expander("📊 Detailed Component Analysis"):
+                                components_str = components['analyzer'].generate_component_breakdown(
+                                    sig['full_result'], sig['ticker']
+                                )
+                                st.code(components_str)
 
                     # Download signals
                     st.markdown("---")
