@@ -5,6 +5,7 @@ from datetime import datetime
 from loguru import logger
 import time
 
+from src.data_collection.market_data import get_short_interest
 from src.data_collection.market_data_cache import get_market_cache
 
 
@@ -88,6 +89,57 @@ class ShortInterestAnalyzer:
         if avg_volume <= 0:
             return 0
         return short_shares / avg_volume
+
+    def calculate_short_interest_score(self, ticker: str) -> Tuple[float, Dict]:
+        """
+        Calculate short interest score (0.0 to 1.0) using real data.
+        
+        New scoring logic:
+        - <5%: score 0.2 (was 0.0)
+        - 5-10%: score 0.4
+        - 10-20%: score 0.7
+        - >20%: score 1.0
+
+        Args:
+            ticker: Stock ticker
+
+        Returns:
+            Tuple of (score, details_dict)
+        """
+        # Use the new market_data module for real short interest
+        si_pct = get_short_interest(ticker)
+        
+        if si_pct is None:
+            # Fallback to old method if new one fails
+            si_data = self.fetch_short_interest(ticker)
+            if 'error' in si_data:
+                return 0.0, {'ticker': ticker, 'short_interest_pct': 0, 'error': 'No data available'}
+            si_pct = si_data['short_interest_pct']
+
+        # New scoring logic
+        if si_pct >= 20:
+            score = 1.0
+            category = "Very High"
+        elif si_pct >= 10:
+            score = 0.7
+            category = "High"
+        elif si_pct >= 5:
+            score = 0.4
+            category = "Medium"
+        else:
+            score = 0.2
+            category = "Low"
+
+        details = {
+            'ticker': ticker,
+            'short_interest_pct': si_pct,
+            'score': score,
+            'category': category,
+            'method': 'real_data'
+        }
+
+        logger.debug(f"Short interest score for {ticker}: {score:.2f} ({si_pct:.2f}% - {category})")
+        return score, details
 
     def calculate_squeeze_potential(self, ticker: str) -> Tuple[float, Dict]:
         """

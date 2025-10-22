@@ -1,4 +1,4 @@
-"""Enhanced conviction scoring with advanced signals (Phase 3 + Phase 4)."""
+"""Enhanced conviction scoring with advanced signals (Phase 3 + Phase 4) + Adaptive Learning."""
 from typing import Dict, Optional
 from datetime import datetime
 from loguru import logger
@@ -17,11 +17,18 @@ try:
 except:
     NETWORK_AVAILABLE = False
 
+try:
+    from src.analysis.adaptive_learner import get_adaptive_learner
+    ADAPTIVE_LEARNING_AVAILABLE = True
+except:
+    ADAPTIVE_LEARNING_AVAILABLE = False
+
 
 class ConvictionScorerV2:
-    """Enhanced conviction scoring with advanced signals."""
+    """Enhanced conviction scoring with advanced signals + adaptive learning."""
 
     # Signal weights (updated for Phase 3 + Phase 4)
+    # These are defaults - adaptive weights will override when available
     WEIGHTS = {
         'insider_cluster': 0.20,      # Base: multi-insider buying
         'filing_speed': 0.12,         # Fast filings = confidence
@@ -33,8 +40,13 @@ class ConvictionScorerV2:
         'network_effects': 0.10,      # NEW: Supply chain + sector effects
     }
 
-    def __init__(self):
-        """Initialize enhanced scorer."""
+    def __init__(self, use_adaptive_learning: bool = True):
+        """
+        Initialize enhanced scorer with optional adaptive learning.
+
+        Args:
+            use_adaptive_learning: If True, use adaptive weights when available
+        """
         self.si_analyzer = ShortInterestAnalyzer()
         self.accumulation_detector = AccumulationDetector()
         self.red_flag_detector = RedFlagDetector()
@@ -42,6 +54,28 @@ class ConvictionScorerV2:
         self.earnings_tracker = EarningsTracker()
         self.silence_detector = SilenceDetector()
         self.network_analyzer = NetworkAnalyzer() if NETWORK_AVAILABLE else None
+
+        # Adaptive learning integration
+        self.use_adaptive_learning = use_adaptive_learning and ADAPTIVE_LEARNING_AVAILABLE
+        self.adaptive_learner = None
+        self.current_weights = self.WEIGHTS.copy()
+        self.conviction_threshold = 0.6  # Default, will be overridden by learner
+
+        if self.use_adaptive_learning:
+            try:
+                self.adaptive_learner = get_adaptive_learner()
+                # Get adaptive weights if available
+                adaptive_weights = self.adaptive_learner.get_adaptive_weights()
+                if adaptive_weights:
+                    self.current_weights = adaptive_weights
+                    logger.info("ConvictionScorerV2 initialized with adaptive weights")
+                else:
+                    logger.info("ConvictionScorerV2 using default weights (insufficient learning data)")
+
+                # Get adaptive conviction threshold
+                self.conviction_threshold = self.adaptive_learner.conviction_threshold
+            except Exception as e:
+                logger.warning(f"Failed to initialize adaptive learning: {e}. Using default weights.")
 
     def calculate_conviction_score_advanced(
         self,
@@ -84,7 +118,7 @@ class ConvictionScorerV2:
             multipliers['insider_cluster'] = cluster_mult
             components['insider_cluster'] = {
                 'score': cluster_signal,
-                'weight': self.WEIGHTS['insider_cluster'],
+                'weight': self.current_weights['insider_cluster'],
                 'multiplier': cluster_mult,
                 'details': accum,
             }
@@ -96,7 +130,7 @@ class ConvictionScorerV2:
             multipliers['filing_speed'] = fs_mult
             components['filing_speed'] = {
                 'score': fs_signal,
-                'weight': self.WEIGHTS['filing_speed'],
+                'weight': self.current_weights['filing_speed'],
                 'multiplier': fs_mult,
                 'details': {'days': filing_speed_days},
             }
@@ -108,7 +142,7 @@ class ConvictionScorerV2:
             multipliers['short_interest'] = squeeze_mult
             components['short_interest'] = {
                 'score': si_signal,
-                'weight': self.WEIGHTS['short_interest'],
+                'weight': self.current_weights['short_interest'],
                 'multiplier': squeeze_mult,
                 'details': si_details,
             }
@@ -119,7 +153,7 @@ class ConvictionScorerV2:
             multipliers['accumulation'] = accum.get('multiplier', 1.0)
             components['accumulation'] = {
                 'score': accum_signal,
-                'weight': self.WEIGHTS['accumulation'],
+                'weight': self.current_weights['accumulation'],
                 'multiplier': accum.get('multiplier', 1.0),
                 'details': accum,
             }
@@ -141,7 +175,7 @@ class ConvictionScorerV2:
             multipliers['options_precursor'] = options_mult
             components['options_precursor'] = {
                 'score': options_signal,
-                'weight': self.WEIGHTS['options_precursor'],
+                'weight': self.current_weights['options_precursor'],
                 'multiplier': options_mult,
                 'details': options_details,
             }
@@ -160,7 +194,7 @@ class ConvictionScorerV2:
             multipliers['earnings_sentiment'] = earnings_mult
             components['earnings_sentiment'] = {
                 'score': earnings_signal,
-                'weight': self.WEIGHTS['earnings_sentiment'],
+                'weight': self.current_weights['earnings_sentiment'],
                 'multiplier': earnings_mult,
                 'details': earnings_details,
             }
@@ -182,7 +216,7 @@ class ConvictionScorerV2:
             multipliers['silence_score'] = silence_mult
             components['silence_score'] = {
                 'score': silence_signal,
-                'weight': self.WEIGHTS['silence_score'],
+                'weight': self.current_weights['silence_score'],
                 'multiplier': silence_mult,
                 'details': silence_details,
             }
@@ -204,7 +238,7 @@ class ConvictionScorerV2:
             multipliers['network_effects'] = network_mult
             components['network_effects'] = {
                 'score': network_signal,
-                'weight': self.WEIGHTS['network_effects'],
+                'weight': self.current_weights['network_effects'],
                 'multiplier': network_mult,
                 'details': network_details,
             }
@@ -217,10 +251,10 @@ class ConvictionScorerV2:
                 )
             penalty_mult = red_flags.get('penalty_multiplier', 1.0)
 
-            # Calculate weighted conviction score
+            # Calculate weighted conviction score (using adaptive or default weights)
             weighted_score = sum(
-                scores.get(component, 0) * self.WEIGHTS.get(component, 0)
-                for component in self.WEIGHTS.keys()
+                scores.get(component, 0) * self.current_weights.get(component, 0)
+                for component in self.current_weights.keys()
             )
 
             # Apply multipliers
@@ -262,6 +296,31 @@ class ConvictionScorerV2:
                 'signal_strength': 'error',
                 'error': str(e),
             }
+
+    def refresh_adaptive_weights(self) -> bool:
+        """
+        Refresh adaptive weights from learner (call periodically).
+
+        Returns:
+            True if weights were updated, False otherwise
+        """
+        if not self.use_adaptive_learning or not self.adaptive_learner:
+            return False
+
+        try:
+            adaptive_weights = self.adaptive_learner.get_adaptive_weights()
+            if adaptive_weights:
+                old_weights = self.current_weights.copy()
+                self.current_weights = adaptive_weights
+                self.conviction_threshold = self.adaptive_learner.conviction_threshold
+
+                logger.info(f"ConvictionScorerV2 weights refreshed")
+                logger.debug(f"Weight changes: {[(k, f'{old_weights[k]:.3f}→{adaptive_weights[k]:.3f}') for k in old_weights.keys()]}")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to refresh adaptive weights: {e}")
+
+        return False
 
     def _categorize_signal(self, conviction_score: float) -> str:
         """Categorize signal strength."""

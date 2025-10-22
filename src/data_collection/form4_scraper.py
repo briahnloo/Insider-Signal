@@ -124,17 +124,22 @@ class Form4Scraper:
             elif root.find('.//isTenPercentOwner') is not None and root.find('.//isTenPercentOwner').text == '1':
                 insider_title = '10% Owner'
 
-            # Extract transactions
+            # Extract transactions (both buys and sells)
             transactions = root.findall('.//nonDerivativeTransaction')
             for transaction in transactions:
                 try:
-                    # Include purchase and exercise transactions (P = Purchase, M = Exercise)
+                    # Include purchase, sale, and exercise transactions
                     trans_code_elem = transaction.find('.//transactionCode')
                     if trans_code_elem is None:
                         continue
-                    
+
                     trans_code = trans_code_elem.text
-                    if trans_code not in ['P', 'M']:  # P = Purchase, M = Exercise of derivative
+                    # P = Purchase, M = Exercise of derivative, S = Sale, G = Gift
+                    if trans_code not in ['P', 'M', 'S', 'G']:
+                        continue
+
+                    # Skip gifts and non-monetary transactions
+                    if trans_code == 'G':
                         continue
 
                     # Extract transaction date
@@ -159,8 +164,9 @@ class Form4Scraper:
                     # Calculate total value
                     total_value = shares * price if price > 0 else shares * 50  # Estimate if no price
 
-                    # Filter by minimum purchase amount
-                    if total_value < config.MIN_PURCHASE_AMOUNT:
+                    # For purchases, filter by minimum amount
+                    # For sales, include all (they're indicators of insider confidence declining)
+                    if trans_code in ['P', 'M'] and total_value < config.MIN_PURCHASE_AMOUNT:
                         continue
 
                     # Extract filing date
@@ -169,6 +175,16 @@ class Form4Scraper:
                         filing_date = datetime.strptime(filing_date_str, '%Y-%m-%d').date()
                     else:
                         filing_date = transaction_date
+
+                    # Determine transaction type for analysis
+                    if trans_code == 'P':
+                        transaction_type = 'BUY'
+                    elif trans_code == 'M':
+                        transaction_type = 'EXERCISE'
+                    elif trans_code == 'S':
+                        transaction_type = 'SALE'
+                    else:
+                        transaction_type = 'OTHER'
 
                     filings.append({
                         'ticker': ticker,
@@ -179,7 +195,8 @@ class Form4Scraper:
                         'shares': shares,
                         'price_per_share': price,
                         'total_value': total_value,
-                        'transaction_type': 'PURCHASE',
+                        'transaction_type': transaction_type,  # Now tracks BUY, SALE, EXERCISE, etc.
+                        'transaction_code': trans_code,  # Keep raw SEC code for reference
                         'form_4_url': str(xml_path)
                     })
 

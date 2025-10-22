@@ -1,5 +1,5 @@
 """Master trade signal orchestration."""
-from typing import Dict, List
+from typing import Dict, List, Optional
 from datetime import datetime
 from loguru import logger
 from rich.console import Console
@@ -10,6 +10,7 @@ from src.data_collection.corporate_actions import CorporateActionsScanner
 from src.data_collection.activist_tracker import ActivistTracker
 from src.execution.entry_timing import EntryTimer
 from src.execution.position_sizing import PositionSizer
+from src.execution.exit_timing import ExitManager, get_exit_manager
 
 try:
     from src.execution.pairs_trading import PairsTradeGenerator
@@ -17,19 +18,34 @@ try:
 except:
     PAIRS_AVAILABLE = False
 
+try:
+    from src.execution.portfolio_manager import get_portfolio_manager
+    PORTFOLIO_AVAILABLE = True
+except:
+    PORTFOLIO_AVAILABLE = False
+
 console = Console()
 
 
 class TradeSignalEngine:
     """Orchestrates all analysis into final trade signals."""
 
-    def __init__(self, account_value: float = 100000):
+    def __init__(self, account_value: float = 100000, portfolio_manager: Optional[object] = None):
         self.conviction_scorer = ConvictionScorer()
         self.corporate_actions = CorporateActionsScanner()
         self.activist_tracker = ActivistTracker()
         self.entry_timer = EntryTimer()
         self.position_sizer = PositionSizer(account_value=account_value)
+        self.exit_manager = get_exit_manager()
         self.pairs_generator = PairsTradeGenerator() if PAIRS_AVAILABLE else None
+
+        # Portfolio management integration
+        self.portfolio_manager = portfolio_manager
+        if PORTFOLIO_AVAILABLE and not portfolio_manager:
+            try:
+                self.portfolio_manager = get_portfolio_manager(account_value=account_value)
+            except:
+                self.portfolio_manager = None
 
     def generate_trade_signal(self, transaction: Dict) -> Dict:
         """
@@ -88,7 +104,19 @@ class TradeSignalEngine:
                 catalyst_date=False,
             )
 
-            # 6. Check for pairs trading opportunities (Phase 4)
+            # 6. Determine exit strategy
+            entry_price = position_sizing.get('entry_price', current_price)
+            exit_strategy = self.exit_manager.determine_exit_strategy(
+                ticker=ticker,
+                entry_price=entry_price,
+                conviction_score=conviction_score,
+                entry_date=transaction.get('transaction_date', datetime.now()),
+                insider_name=transaction.get('insider_name', 'Unknown'),
+                current_price=current_price,
+                risk_tolerance='balanced'
+            )
+
+            # 7. Check for pairs trading opportunities (Phase 4)
             pairs_opportunities = []
             hedges = []
             if PAIRS_AVAILABLE and self.pairs_generator and conviction_score >= 0.60:
@@ -97,6 +125,36 @@ class TradeSignalEngine:
                 hedges = self.pairs_generator.generate_hedge_trades(
                     ticker, long_conviction=conviction_score
                 ).get('hedges', [])
+
+            # Check portfolio constraints
+            portfolio_check = None
+            portfolio_warnings = []
+            if self.portfolio_manager:
+                try:
+                    # Get sector from transaction if available
+                    sector = transaction.get('sector', 'Unknown')
+
+                    # Get position recommendation
+                    rec = self.portfolio_manager.get_position_recommendation(
+                        ticker=ticker,
+                        conviction_score=conviction_score,
+                        sector=sector
+                    )
+
+                    portfolio_check = {
+                        'ok_to_add': rec.get('ok_to_add', True),
+                        'recommended_pct': rec.get('recommended_pct', 0),
+                        'warnings': rec.get('warnings', [])
+                    }
+                    portfolio_warnings = rec.get('warnings', [])
+
+                    # Get active risk warnings
+                    all_warnings = self.portfolio_manager.get_risk_warnings()
+                    high_level_warnings = [w for w in all_warnings if w['level'] == 'HIGH']
+                    portfolio_warnings.extend([w['message'] for w in high_level_warnings])
+
+                except Exception as e:
+                    logger.warning(f"Portfolio constraint check failed: {e}")
 
             # Determine signal strength
             if conviction_score >= 0.85:
@@ -107,6 +165,10 @@ class TradeSignalEngine:
                 signal = 'WEAK_BUY'
             else:
                 signal = 'NEUTRAL'
+
+            # Reduce signal if portfolio constraints violated
+            if portfolio_check and not portfolio_check.get('ok_to_add', True):
+                signal = 'SKIP' if signal in ['WEAK_BUY', 'NEUTRAL'] else 'WEAK_BUY'
 
             final_signal = {
                 'timestamp': datetime.now(),
@@ -134,6 +196,14 @@ class TradeSignalEngine:
                     'stop_loss': position_sizing.get('stop_loss_price'),
                     'risk_amount': position_sizing.get('total_risk'),
                 },
+                'exit': {
+                    'strategy': exit_strategy.get('strategy'),
+                    'profit_targets': exit_strategy.get('profit_targets'),
+                    'stop_levels': exit_strategy.get('stop_levels'),
+                    'exit_signals': exit_strategy.get('exit_signals'),
+                    'primary_signal': exit_strategy.get('primary_signal'),
+                    'suggested_action': exit_strategy.get('suggested_action'),
+                },
                 'catalysts': {
                     'corporate_actions_multiplier': corp_mult,
                     'activist_involvement': activist_mult > 1.0,
@@ -144,7 +214,9 @@ class TradeSignalEngine:
                     'hedges': hedges,
                     'total_hedges': len(hedges),
                 } if pairs_opportunities or hedges else None,
-                'ready_for_entry': entry_strategy.get('ready', True),
+                'portfolio_check': portfolio_check,
+                'portfolio_warnings': portfolio_warnings,
+                'ready_for_entry': entry_strategy.get('ready', True) and (portfolio_check is None or portfolio_check.get('ok_to_add', True)),
             }
 
             logger.info(f"Signal for {ticker}: {signal} (Score: {conviction_score:.3f})")

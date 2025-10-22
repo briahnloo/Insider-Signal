@@ -114,28 +114,34 @@ def get_recent_transactions(days: int = 30, min_value: float = 0) -> pd.DataFram
     """
     session = Session()
     try:
-        query = session.query(InsiderTransaction).filter(
+        # OPTIMIZED: Use direct column selection and SQLAlchemy native DataFrame conversion
+        query = session.query(
+            InsiderTransaction.id,
+            InsiderTransaction.ticker,
+            InsiderTransaction.insider_name,
+            InsiderTransaction.insider_title,
+            InsiderTransaction.transaction_date,
+            InsiderTransaction.filing_date,
+            InsiderTransaction.filing_speed_days,
+            InsiderTransaction.shares,
+            InsiderTransaction.price_per_share,
+            InsiderTransaction.total_value,
+            InsiderTransaction.transaction_type
+        ).filter(
             InsiderTransaction.total_value >= min_value
         ).order_by(InsiderTransaction.filing_date.desc())
 
-        transactions = query.all()
-        data = []
-        for t in transactions:
-            data.append({
-                'id': t.id,
-                'ticker': t.ticker,
-                'insider_name': t.insider_name,
-                'insider_title': t.insider_title,
-                'transaction_date': t.transaction_date,
-                'filing_date': t.filing_date,
-                'filing_speed_days': t.filing_speed_days,
-                'shares': t.shares,
-                'price_per_share': t.price_per_share,
-                'total_value': t.total_value,
-                'transaction_type': t.transaction_type
-            })
+        # Convert to list of tuples, then to DataFrame (much faster than manual loop)
+        data = query.all()
+        if not data:
+            return pd.DataFrame()
 
-        return pd.DataFrame(data)
+        df = pd.DataFrame(data, columns=[
+            'id', 'ticker', 'insider_name', 'insider_title', 'transaction_date',
+            'filing_date', 'filing_speed_days', 'shares', 'price_per_share',
+            'total_value', 'transaction_type'
+        ])
+        return df
     except Exception as e:
         logger.error(f"Failed to retrieve transactions: {e}")
         return pd.DataFrame()
@@ -156,25 +162,28 @@ def get_transactions_by_ticker(ticker: str, days: int = 90) -> pd.DataFrame:
     """
     session = Session()
     try:
-        query = session.query(InsiderTransaction).filter(
+        # OPTIMIZED: Vectorized query with direct DataFrame construction
+        query = session.query(
+            InsiderTransaction.insider_name,
+            InsiderTransaction.insider_title,
+            InsiderTransaction.transaction_date,
+            InsiderTransaction.filing_date,
+            InsiderTransaction.filing_speed_days,
+            InsiderTransaction.shares,
+            InsiderTransaction.price_per_share,
+            InsiderTransaction.total_value
+        ).filter(
             InsiderTransaction.ticker == ticker.upper()
         ).order_by(InsiderTransaction.filing_date.desc())
 
-        transactions = query.all()
-        data = []
-        for t in transactions:
-            data.append({
-                'insider_name': t.insider_name,
-                'insider_title': t.insider_title,
-                'transaction_date': t.transaction_date,
-                'filing_date': t.filing_date,
-                'filing_speed_days': t.filing_speed_days,
-                'shares': t.shares,
-                'price_per_share': t.price_per_share,
-                'total_value': t.total_value
-            })
+        data = query.all()
+        if not data:
+            return pd.DataFrame()
 
-        return pd.DataFrame(data)
+        return pd.DataFrame(data, columns=[
+            'insider_name', 'insider_title', 'transaction_date', 'filing_date',
+            'filing_speed_days', 'shares', 'price_per_share', 'total_value'
+        ])
     except Exception as e:
         logger.error(f"Failed to retrieve transactions for {ticker}: {e}")
         return pd.DataFrame()
@@ -198,28 +207,31 @@ def get_all_recent_transactions(days: int = 30, min_value: float = 0) -> pd.Data
         from datetime import timedelta
         cutoff_date = datetime.now() - timedelta(days=days)
 
-        query = session.query(InsiderTransaction).filter(
+        # OPTIMIZED: Vectorized query with direct DataFrame construction
+        query = session.query(
+            InsiderTransaction.ticker,
+            InsiderTransaction.insider_name,
+            InsiderTransaction.insider_title,
+            InsiderTransaction.transaction_date,
+            InsiderTransaction.filing_date,
+            InsiderTransaction.filing_speed_days,
+            InsiderTransaction.shares,
+            InsiderTransaction.price_per_share,
+            InsiderTransaction.total_value,
+            InsiderTransaction.transaction_type
+        ).filter(
             InsiderTransaction.filing_date >= cutoff_date.date(),
             InsiderTransaction.total_value >= min_value
         ).order_by(InsiderTransaction.filing_date.desc())
 
-        transactions = query.all()
-        data = []
-        for t in transactions:
-            data.append({
-                'ticker': t.ticker,
-                'insider_name': t.insider_name,
-                'insider_title': t.insider_title,
-                'transaction_date': t.transaction_date,
-                'filing_date': t.filing_date,
-                'filing_speed_days': t.filing_speed_days,
-                'shares': t.shares,
-                'price_per_share': t.price_per_share,
-                'total_value': t.total_value,
-                'transaction_type': t.transaction_type
-            })
+        data = query.all()
+        if not data:
+            return pd.DataFrame()
 
-        return pd.DataFrame(data)
+        return pd.DataFrame(data, columns=[
+            'ticker', 'insider_name', 'insider_title', 'transaction_date', 'filing_date',
+            'filing_speed_days', 'shares', 'price_per_share', 'total_value', 'transaction_type'
+        ])
     except Exception as e:
         logger.error(f"Failed to retrieve recent transactions: {e}")
         return pd.DataFrame()
@@ -231,17 +243,35 @@ def get_database_stats() -> Dict:
     """Get basic statistics about the database."""
     session = Session()
     try:
+        # Get total transactions count
         total = session.query(InsiderTransaction).count()
+        
+        # Get unique tickers count
         unique_tickers = session.query(InsiderTransaction.ticker).distinct().count()
-        avg_value = session.query(func.avg(InsiderTransaction.total_value)).scalar()
-
-        # Handle None case when database is empty
-        avg_value = avg_value if avg_value is not None else 0.0
+        
+        # Get date range for context
+        date_range = session.query(
+            func.min(InsiderTransaction.transaction_date),
+            func.max(InsiderTransaction.transaction_date)
+        ).first()
+        
+        date_range_days = 0
+        if date_range[0] and date_range[1]:
+            from datetime import datetime
+            if isinstance(date_range[0], str):
+                start_date = datetime.strptime(date_range[0], '%Y-%m-%d').date()
+            else:
+                start_date = date_range[0]
+            if isinstance(date_range[1], str):
+                end_date = datetime.strptime(date_range[1], '%Y-%m-%d').date()
+            else:
+                end_date = date_range[1]
+            date_range_days = (end_date - start_date).days
 
         stats = {
             'total_transactions': total,
             'unique_tickers': unique_tickers,
-            'average_transaction_value': avg_value
+            'date_range_days': date_range_days
         }
         return stats
     except Exception as e:
@@ -249,7 +279,7 @@ def get_database_stats() -> Dict:
         return {
             'total_transactions': 0,
             'unique_tickers': 0,
-            'average_transaction_value': 0.0
+            'date_range_days': 0
         }
     finally:
         session.close()

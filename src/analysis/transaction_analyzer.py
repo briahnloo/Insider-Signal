@@ -91,13 +91,29 @@ class TransactionAnalyzer:
         cutoff_date = datetime.now() - timedelta(days=window_days)
 
         # Filter to ticker and window
-        ticker_txns = [
-            t for t in transactions
-            if t.get('ticker', '').upper() == ticker and
-            isinstance(t.get('transaction_date'), (datetime, pd.Timestamp)) and
-            (t.get('transaction_date') if isinstance(t['transaction_date'], datetime)
-             else pd.to_datetime(t['transaction_date'])) >= cutoff_date
-        ]
+        ticker_txns = []
+        for t in transactions:
+            if t.get('ticker', '').upper() != ticker:
+                continue
+                
+            # Handle different date types
+            txn_date = t.get('transaction_date')
+            if txn_date is None:
+                continue
+                
+            # Convert to datetime for comparison
+            if isinstance(txn_date, datetime):
+                txn_datetime = txn_date
+            elif isinstance(txn_date, pd.Timestamp):
+                txn_datetime = txn_date.to_pydatetime()
+            else:
+                # Assume it's a date object
+                txn_datetime = datetime.combine(txn_date, datetime.min.time())
+            
+            # Check if within window and is a buy transaction
+            if (txn_datetime >= cutoff_date and 
+                t.get('transaction_type', 'BUY').upper() in ['BUY', 'EXERCISE', 'PURCHASE', 'BUY EXERCISE']):
+                ticker_txns.append(t)
 
         if not ticker_txns:
             return {
@@ -352,7 +368,21 @@ class TransactionAnalyzer:
         
         component_importance.sort(key=lambda x: x[3], reverse=True)
 
-        breakdown += "KEY SIGNALS THAT MAKE THIS A STRONG BUY:\n\n"
+        # Determine signal strength based on conviction score
+        conviction_score = conviction_components.get('conviction_score', 0.0)
+        
+        if conviction_score >= 0.85:
+            signal_type = "STRONG BUY"
+        elif conviction_score >= 0.75:
+            signal_type = "BUY"
+        elif conviction_score >= 0.65:
+            signal_type = "ACCUMULATE"
+        elif conviction_score >= 0.60:
+            signal_type = "WATCH"
+        else:
+            signal_type = "WEAK SIGNAL"
+        
+        breakdown += f"KEY SIGNALS THAT MAKE THIS A {signal_type}:\n\n"
 
         for component, actual_score, weight, importance in component_importance:
             info = interpretations[component]
